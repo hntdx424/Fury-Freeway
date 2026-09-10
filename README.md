@@ -22,7 +22,7 @@ npm run build    # production bundle
 npm run preview  # serve the build
 ```
 
-If the browser does not capture the pointer, you can still play: **A / D** (or arrows) steer, and the mouse steers toward wherever it sits relative to the center of the window. Click again to recapture.
+If the browser does not capture the pointer, you can still play: **A / D** (or arrows) always steer. Unlocked mouse steering stays **neutral until you move the mouse** — a parked cursor (even off-center) will not circle the car. After you move it, steer is relative (same idea as pointer lock) and returns to straight when the mouse is still. Click again to recapture.
 
 ## Controls
 

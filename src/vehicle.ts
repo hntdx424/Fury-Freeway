@@ -63,7 +63,7 @@ export class PlayerCar {
     return dmg;
   }
 
-  update(dt: number, input: Input, unlockedSteer = 0): void {
+  update(dt: number, input: Input): void {
     this.invuln = Math.max(0, this.invuln - dt);
     if (this.wrecked) {
       this.vx *= Math.exp(-2.8 * dt);
@@ -79,12 +79,12 @@ export class PlayerCar {
     const throttle = input.throttle();
     const handbrake = input.handbrake();
 
-    if (input.pointerLocked) {
-      this.steer = clamp(this.steer + mouse.dx * 0.0032 + input.steerKeys() * 3.4 * dt, -1, 1);
+    const key = input.steerKeys();
+    if (input.pointerLocked || input.unlockedAimLive) {
+      this.steer = clamp(this.steer + mouse.dx * 0.0032 + key * 3.4 * dt, -1, 1);
       this.steer *= Math.pow(0.12, dt);
     } else {
-      const key = input.steerKeys();
-      const target = key !== 0 ? key : unlockedSteer;
+      const target = key;
       this.steer = this.steer + (target - this.steer) * Math.min(1, 10 * dt);
     }
 

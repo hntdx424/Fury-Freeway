@@ -87,6 +87,7 @@ export class Game {
     if (this.mode === "title") {
       this.audio.setEngine(0, 0, 0);
       this.camRot += dt * 0.12;
+      this.input.consumeRestart();
       if (clicked && !this.starting) {
         this.starting = true;
         void this.audio.start();
@@ -103,7 +104,7 @@ export class Game {
     }
 
     if (this.mode === "pause") {
-      if (this.input.down("KeyR")) {
+      if (this.input.consumeRestart() || this.input.down("KeyR")) {
         this.reset(true);
         this.input.consumeMouse();
         this.input.requestLock();
@@ -121,7 +122,7 @@ export class Game {
     if (this.mode === "wrecked") {
       this.audio.setEngine(0, 0, 0);
       this.fx.update(dt);
-      if (clicked || this.input.down("KeyR")) {
+      if (clicked || this.input.consumeRestart() || this.input.down("KeyR")) {
         this.reset(true);
         this.input.consumeMouse();
         this.input.requestLock();
@@ -138,7 +139,7 @@ export class Game {
     }
     if (clicked && !this.input.pointerLocked) this.input.requestLock();
 
-    if (this.input.down("KeyR")) {
+    if (this.input.consumeRestart() || this.input.down("KeyR")) {
       this.reset(true);
       return;
     }

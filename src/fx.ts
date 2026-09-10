@@ -62,6 +62,7 @@ export class Fx {
     for (const s of this.skids) s.life -= dt * 0.22;
     if (this.skids.length > 420) this.skids.splice(0, this.skids.length - 420);
     this.skids = this.skids.filter((s) => s.life > 0);
+    if (this.particles.length > 560) this.particles.splice(0, this.particles.length - 560);
 
     return this.slowmo;
   }
@@ -76,6 +77,7 @@ export class Fx {
   }
 
   burst(x: number, y: number, color: string, mag: number, kind: string): void {
+    if (this.particles.length > 520) return;
     const n = 8 + Math.min(22, Math.floor(mag / 28));
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;

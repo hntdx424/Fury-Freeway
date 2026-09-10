@@ -30,7 +30,7 @@ let last = performance.now();
 function frame(now: number): void {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
-  void game.update(dt);
+  game.update(dt);
   game.draw(gctx);
   requestAnimationFrame(frame);
 }

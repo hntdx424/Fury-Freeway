@@ -173,27 +173,32 @@ export class Smashables {
         driveTraffic(p, dt);
       }
 
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.angle += p.spin * dt;
-      p.vx *= Math.exp(-1.8 * dt);
-      p.vy *= Math.exp(-1.8 * dt);
-      p.spin *= Math.exp(-2.2 * dt);
-      if (p.wrecked) p.smoke = Math.min(1, p.smoke + dt * 0.4);
+      const moving = Math.abs(p.vx) + Math.abs(p.vy) + Math.abs(p.spin) > 4 || p.special === "drive";
+      if (moving) {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.angle += p.spin * dt;
+        p.vx *= Math.exp(-1.8 * dt);
+        p.vy *= Math.exp(-1.8 * dt);
+        p.spin *= Math.exp(-2.2 * dt);
+        if (p.wrecked) p.smoke = Math.min(1, p.smoke + dt * 0.4);
 
-      if (p.x < p.r || p.x > WORLD - p.r) {
-        p.vx *= -0.4;
-        p.x = clamp(p.x, p.r, WORLD - p.r);
-      }
-      if (p.y < p.r || p.y > WORLD - p.r) {
-        p.vy *= -0.4;
-        p.y = clamp(p.y, p.r, WORLD - p.r);
+        if (p.x < p.r || p.x > WORLD - p.r) {
+          p.vx *= -0.4;
+          p.x = clamp(p.x, p.r, WORLD - p.r);
+        }
+        if (p.y < p.r || p.y > WORLD - p.r) {
+          p.vy *= -0.4;
+          p.y = clamp(p.y, p.r, WORLD - p.r);
+        }
+
+        const wall = resolvePropBuildings(p, buildings);
+        if (wall > 140 && p.hp > 0) {
+          hurt(p, wall * 0.08, fx);
+        }
       }
 
-      const wall = resolvePropBuildings(p, buildings);
-      if (wall > 140 && p.hp > 0) {
-        hurt(p, wall * 0.08, fx);
-      }
+      if (p.wrecked && !moving) p.smoke = Math.min(1, p.smoke + dt * 0.15);
 
       const dx = p.x - player.x;
       const dy = p.y - player.y;
@@ -497,13 +502,14 @@ function drawProp(ctx: CanvasRenderingContext2D, p: Prop): void {
     case "traffic":
       ctx.restore();
       drawCar(ctx, p.x, p.y, p.angle, 38, 18, p.wrecked ? "#3a3030" : p.color, p.accent, p.wrecked);
-      ctx.save();
       if (p.wrecked && p.smoke > 0) {
+        ctx.save();
         ctx.globalAlpha = 0.25 * p.smoke;
         ctx.fillStyle = "#777";
         ctx.beginPath();
         ctx.arc(p.x, p.y - 10, 8 + p.smoke * 6, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
       }
       return;
   }

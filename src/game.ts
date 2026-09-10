@@ -74,18 +74,22 @@ export class Game {
     if (!keepMode) this.mode = "title";
   }
 
-  async update(dt: number): Promise<void> {
+  update(dt: number): void {
     const clicked = this.input.consumeClick();
     const escaped = this.input.consumeEscape();
 
     if (this.mode === "title") {
       this.audio.setEngine(0, 0, 0);
-      this.camRot += dt * 0.15;
+      this.camRot += dt * 0.12;
       if (clicked && !this.starting) {
         this.starting = true;
-        await this.audio.start();
+        void this.audio.start();
         this.input.consumeMouse();
         this.input.requestLock();
+        this.camRot = this.player.angle + Math.PI / 2;
+        this.camX = this.player.x;
+        this.camY = this.player.y;
+        this.camZoom = 1.22;
         this.mode = "play";
         this.starting = false;
       }
@@ -198,13 +202,13 @@ export class Game {
       }
     }
 
-    const look = 90 + this.player.speed * 0.12;
+    const look = 48 + this.player.speed * 0.08;
     const tx = this.player.x + this.player.headingX * look;
     const ty = this.player.y + this.player.headingY * look;
     this.camX = lerp(this.camX, tx, 1 - Math.pow(0.0002, sdt));
     this.camY = lerp(this.camY, ty, 1 - Math.pow(0.0002, sdt));
     this.camRot = lerpAngle(this.camRot, this.player.angle + Math.PI / 2, 1 - Math.pow(0.02, sdt));
-    const zTarget = clamp(1.05 - this.player.speed / 1400, 0.72, 1.08);
+    const zTarget = clamp(1.28 - this.player.speed / 1800, 0.92, 1.32);
     this.camZoom = lerp(this.camZoom, zTarget, 1 - Math.pow(0.08, sdt));
 
     this.audio.setEngine(this.player.speed, this.input.throttle(), this.player.skid);

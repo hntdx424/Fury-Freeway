@@ -73,10 +73,14 @@ export class AudioEngine {
     this.rumbleGain.gain.setTargetAtTime(this.muted ? 0 : Math.min(0.05, abs / 9000 + sliding * 0.03), t, 0.1);
   }
 
+  private lastCrash = 0;
+
   crash(impact: number, metallic = 0.5): void {
     if (!this.ctx || !this.master || this.muted) return;
     const ctx = this.ctx;
     const t = ctx.currentTime;
+    if (t - this.lastCrash < 0.045) return;
+    this.lastCrash = t;
     const mag = Math.min(1.4, impact / 280);
 
     const thump = ctx.createOscillator();

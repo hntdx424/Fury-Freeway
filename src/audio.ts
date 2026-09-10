@@ -33,6 +33,63 @@ const MATERIAL: Record<ImpactKind, Material> = {
   building: "concrete",
 };
 
+/** Keep biquads well below Nyquist — values near/above it NaN the whole graph. */
+export const AUDIO_SPEED_CAP = 640;
+export const ENGINE_HZ_MIN = 42;
+export const ENGINE_HZ_MAX = 168;
+export const FILTER_HZ_MAX = 2400;
+
+export type EngineVoice = {
+  engineHz: number;
+  engineHz2: number;
+  engineCutoff: number;
+  engineVol: number;
+  rumbleHz: number;
+  rumbleVol: number;
+  tireHz: number;
+  tireVol: number;
+  skidHz: number;
+  skidVol: number;
+  windHz: number;
+  windVol: number;
+};
+
+export function computeEngineVoice(
+  speed: number,
+  throttle: number,
+  sliding: number,
+  muted: boolean,
+  sampleRate: number,
+): EngineVoice {
+  const nyquist = Math.max(2000, sampleRate * 0.5);
+  const hzCeil = Math.min(FILTER_HZ_MAX, nyquist * 0.38);
+  const hz = (value: number, lo: number, hi: number) => clamp(finite(value, lo), lo, Math.min(hi, hzCeil));
+  const vol = (value: number, hi: number) => (muted ? 0 : clamp(finite(value, 0), 0, hi));
+
+  const abs = clamp(finite(Math.abs(speed), 0), 0, AUDIO_SPEED_CAP);
+  const th = clamp(finite(throttle, 0), 0, 1);
+  const slide = clamp(finite(sliding, 0), 0, 1);
+  const gear = Math.max(1, Math.min(5, Math.floor(abs / 92) + 1));
+  const inGear = clamp((abs - (gear - 1) * 92) / 92, 0, 1);
+  const idle = abs < 12;
+  const rpmN = clamp(idle ? 0.2 + th * 0.12 : 0.28 + inGear * 0.5 + th * 0.14, 0.12, 0.92);
+  const engineHz = hz(46 + rpmN * 110, ENGINE_HZ_MIN, ENGINE_HZ_MAX);
+  return {
+    engineHz,
+    engineHz2: hz(engineHz * 1.42 + 6, 50, 230),
+    engineCutoff: hz(240 + rpmN * 400 + th * 110, 220, 720),
+    engineVol: vol(idle ? 0.035 + th * 0.02 : 0.045 + rpmN * 0.065 + th * 0.02, 0.14),
+    rumbleHz: hz(36 + rpmN * 22, 28, 58),
+    rumbleVol: vol(0.018 + rpmN * 0.028, 0.05),
+    tireHz: hz(480 + abs * 0.42, 420, 760),
+    tireVol: vol(Math.min(0.05, (abs / 560) * 0.048), 0.055),
+    skidHz: hz(880 + slide * 320, 800, 1280),
+    skidVol: vol(slide * 0.055, 0.07),
+    windHz: hz(360 + abs * 0.55, 320, 720),
+    windVol: vol(Math.max(0, (abs - 140) / 720) * 0.04, 0.045),
+  };
+}
+
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -50,24 +107,41 @@ export class AudioEngine {
   private skidGain: GainNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private windGain: GainNode | null = null;
+  /** Strong refs so Chrome cannot GC live nodes and mute the destination. */
+  private graph: AudioNode[] = [];
   private buffers = new Map<Material, AudioBuffer[]>();
   private voices = 0;
   private lastCrash = 0;
   private started = false;
+  private resumeBound = false;
+  private resuming = false;
   muted = false;
 
   async start(): Promise<void> {
-    if (this.started) {
-      if (this.ctx?.state === "suspended") await this.ctx.resume();
+    if (this.ctx?.state === "closed") this.dropGraph();
+    if (this.started && this.ctx) {
+      await this.resume();
       this.applyMute();
       return;
     }
-    const ctx = new AudioContext();
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    let ctx: AudioContext;
+    try {
+      ctx = new Ctx({ latencyHint: "interactive" });
+    } catch {
+      ctx = new Ctx();
+    }
     this.ctx = ctx;
+    this.bindResume();
 
     const master = ctx.createGain();
     master.gain.value = 0.7;
     this.master = master;
+
+    const air = ctx.createBiquadFilter();
+    air.type = "lowpass";
+    air.Q.value = 0.65;
+    air.frequency.value = maxFilterHz(ctx.sampleRate, 7500);
 
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -18;
@@ -75,7 +149,9 @@ export class AudioEngine {
     comp.ratio.value = 5.5;
     comp.attack.value = 0.004;
     comp.release.value = 0.18;
-    master.connect(comp);
+
+    master.connect(air);
+    air.connect(comp);
     comp.connect(ctx.destination);
 
     const engineBus = ctx.createGain();
@@ -104,7 +180,7 @@ export class AudioEngine {
     const filter = ctx.createBiquadFilter();
     filter.type = "lowpass";
     filter.frequency.value = 380;
-    filter.Q.value = 1.1;
+    filter.Q.value = 0.95;
     this.engineFilter = filter;
     const eg = ctx.createGain();
     eg.gain.value = 0;
@@ -123,28 +199,27 @@ export class AudioEngine {
     osc2.type = "triangle";
     osc2.frequency.value = 82;
     const g2 = ctx.createGain();
-    g2.gain.value = 0.35;
+    g2.gain.value = 0.32;
     osc2.connect(g2);
     g2.connect(filter);
     osc2.start();
     this.engineOsc2 = osc2;
 
+    // Detune (cents), not frequency — FM into frequency can scream if the LFO gain runs away.
     const lfo = ctx.createOscillator();
     lfo.type = "sine";
-    lfo.frequency.value = 22;
+    lfo.frequency.value = 6.5;
     const lfoG = ctx.createGain();
-    lfoG.gain.value = 4.5;
+    lfoG.gain.value = 18;
     lfo.connect(lfoG);
-    lfoG.connect(osc.frequency);
+    lfoG.connect(osc.detune);
     lfo.start();
 
-    const tireSrc = ctx.createBufferSource();
-    tireSrc.buffer = pink;
-    tireSrc.loop = true;
+    const tireSrc = loopNoise(ctx, pink);
     const tf = ctx.createBiquadFilter();
     tf.type = "bandpass";
-    tf.frequency.value = 780;
-    tf.Q.value = 0.85;
+    tf.frequency.value = 520;
+    tf.Q.value = 0.75;
     const tg = ctx.createGain();
     tg.gain.value = 0;
     tireSrc.connect(tf);
@@ -154,13 +229,11 @@ export class AudioEngine {
     this.tireFilter = tf;
     this.tireGain = tg;
 
-    const skidSrc = ctx.createBufferSource();
-    skidSrc.buffer = pink;
-    skidSrc.loop = true;
+    const skidSrc = loopNoise(ctx, pink);
     const sf = ctx.createBiquadFilter();
     sf.type = "bandpass";
-    sf.frequency.value = 1600;
-    sf.Q.value = 3.2;
+    sf.frequency.value = 980;
+    sf.Q.value = 1.15;
     const sg = ctx.createGain();
     sg.gain.value = 0;
     skidSrc.connect(sf);
@@ -170,31 +243,78 @@ export class AudioEngine {
     this.skidFilter = sf;
     this.skidGain = sg;
 
-    const windSrc = ctx.createBufferSource();
-    windSrc.buffer = pink;
-    windSrc.loop = true;
+    const windSrc = loopNoise(ctx, pink);
     const wf = ctx.createBiquadFilter();
-    wf.type = "highpass";
-    wf.frequency.value = 1800;
-    wf.Q.value = 0.5;
+    wf.type = "bandpass";
+    wf.frequency.value = 420;
+    wf.Q.value = 0.7;
+    const wa = ctx.createBiquadFilter();
+    wa.type = "lowpass";
+    wa.frequency.value = maxFilterHz(ctx.sampleRate, 1800);
+    wa.Q.value = 0.5;
     const wg = ctx.createGain();
     wg.gain.value = 0;
     windSrc.connect(wf);
-    wf.connect(wg);
+    wf.connect(wa);
+    wa.connect(wg);
     wg.connect(engineBus);
     windSrc.start();
     this.windFilter = wf;
     this.windGain = wg;
 
+    this.graph = [
+      master,
+      air,
+      comp,
+      engineBus,
+      sfxBus,
+      rumble,
+      rg,
+      filter,
+      eg,
+      osc,
+      osc2,
+      g2,
+      lfo,
+      lfoG,
+      tireSrc,
+      tf,
+      tg,
+      skidSrc,
+      sf,
+      sg,
+      windSrc,
+      wf,
+      wa,
+      wg,
+    ];
+    if (this.graph.length < 20) throw new Error("Audio graph failed to wire");
+
     this.bakeHits(ctx);
     this.started = true;
     this.applyMute();
-    if (ctx.state === "suspended") await ctx.resume();
+    await this.resume();
+  }
+
+  async resume(): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state === "closed" || this.resuming) return;
+    if (document.visibilityState === "hidden") return;
+    if (ctx.state === "running") return;
+    this.resuming = true;
+    try {
+      await ctx.resume();
+    } catch {
+      /* autoplay may require another gesture; start() / click will retry */
+    } finally {
+      this.resuming = false;
+    }
   }
 
   setMuted(muted: boolean): void {
     this.muted = muted;
     this.applyMute();
+    if (!muted) void this.resume();
   }
 
   toggleMute(): boolean {
@@ -206,37 +326,26 @@ export class AudioEngine {
     if (!this.ctx || !this.engineOsc || !this.engineOsc2 || !this.engineGain || !this.engineFilter) return;
     if (!this.rumble || !this.rumbleGain || !this.tireGain || !this.skidGain || !this.windGain) return;
     if (!this.tireFilter || !this.skidFilter || !this.windFilter) return;
-    const t = this.ctx.currentTime;
-    const abs = Math.abs(speed);
-    const th = Math.max(0, throttle);
-    const gear = Math.max(1, Math.min(5, Math.floor(abs / 92) + 1));
-    const inGear = clamp((abs - (gear - 1) * 92) / 92, 0, 1);
-    const idle = abs < 12;
-    const rpmN = idle ? 0.2 + th * 0.12 : 0.28 + inGear * 0.52 + th * 0.16;
-    const baseHz = 48 + rpmN * 150;
-    this.engineOsc.frequency.setTargetAtTime(baseHz, t, 0.06);
-    this.engineOsc2.frequency.setTargetAtTime(baseHz * 1.48 + 8, t, 0.07);
-    this.engineFilter.frequency.setTargetAtTime(260 + rpmN * 720 + th * 220, t, 0.08);
-    const engVol = this.muted ? 0 : idle ? 0.035 + th * 0.02 : 0.045 + rpmN * 0.07 + th * 0.025;
-    this.engineGain.gain.setTargetAtTime(engVol, t, 0.08);
-    this.rumble.frequency.setTargetAtTime(36 + rpmN * 28, t, 0.08);
-    this.rumbleGain.gain.setTargetAtTime(this.muted ? 0 : 0.02 + rpmN * 0.035, t, 0.1);
-
-    const tire = this.muted ? 0 : Math.min(0.055, (abs / 520) * 0.05);
-    this.tireGain.gain.setTargetAtTime(tire, t, 0.1);
-    this.tireFilter.frequency.setTargetAtTime(520 + abs * 0.9, t, 0.12);
-
-    const skid = this.muted ? 0 : sliding * 0.07;
-    this.skidGain.gain.setTargetAtTime(skid, t, 0.05);
-    this.skidFilter.frequency.setTargetAtTime(1200 + sliding * 900, t, 0.05);
-
-    const wind = this.muted ? 0 : Math.max(0, (abs - 160) / 700) * 0.045;
-    this.windGain.gain.setTargetAtTime(wind, t, 0.15);
-    this.windFilter.frequency.setTargetAtTime(1400 + abs * 1.2, t, 0.2);
+    this.kickResume();
+    const v = computeEngineVoice(speed, throttle, sliding, this.muted, this.ctx.sampleRate);
+    // Direct .value (not per-frame setTargetAtTime): automation events were unbounded and killed the graph.
+    this.engineOsc.frequency.value = v.engineHz;
+    this.engineOsc2.frequency.value = v.engineHz2;
+    this.engineFilter.frequency.value = v.engineCutoff;
+    this.engineGain.gain.value = v.engineVol;
+    this.rumble.frequency.value = v.rumbleHz;
+    this.rumbleGain.gain.value = v.rumbleVol;
+    this.tireGain.gain.value = v.tireVol;
+    this.tireFilter.frequency.value = v.tireHz;
+    this.skidGain.gain.value = v.skidVol;
+    this.skidFilter.frequency.value = v.skidHz;
+    this.windGain.gain.value = v.windVol;
+    this.windFilter.frequency.value = v.windHz;
   }
 
   crash(impact: number, kind: ImpactKind = "barrier"): void {
     if (!this.ctx || !this.sfxBus || this.muted) return;
+    this.kickResume();
     const ctx = this.ctx;
     const t = ctx.currentTime;
     if (t - this.lastCrash < 0.032) return;
@@ -253,7 +362,7 @@ export class AudioEngine {
     const low = material === "concrete" ? 42 : material === "hollow" ? 70 : 58;
     thump.frequency.setValueAtTime(low + mag * 36, t);
     thump.frequency.exponentialRampToValueAtTime(24, t + 0.22);
-    tg.gain.setValueAtTime(0.16 * mag, t);
+    tg.gain.setValueAtTime(Math.max(0.001, 0.16 * mag), t);
     tg.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
     thump.connect(tg);
     tg.connect(this.sfxBus);
@@ -263,9 +372,9 @@ export class AudioEngine {
     if (buf) {
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.playbackRate.value = 0.88 + Math.random() * 0.28;
+      src.playbackRate.value = clamp(0.88 + Math.random() * 0.28, 0.7, 1.25);
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0.22 * mag, t);
+      g.gain.setValueAtTime(Math.max(0.001, 0.22 * mag), t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
       const f = ctx.createBiquadFilter();
       f.type = "lowshelf";
@@ -289,15 +398,16 @@ export class AudioEngine {
 
   combo(level: number): void {
     if (!this.ctx || !this.sfxBus || this.muted) return;
+    this.kickResume();
     const ctx = this.ctx;
     const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     osc.type = "triangle";
     const f = ctx.createBiquadFilter();
     f.type = "lowpass";
-    f.frequency.value = 1400;
+    f.frequency.value = maxFilterHz(ctx.sampleRate, 1400);
     const g = ctx.createGain();
-    const freq = 180 + Math.min(10, level) * 28;
+    const freq = clamp(180 + Math.min(10, level) * 28, 120, 480);
     osc.frequency.setValueAtTime(freq, t);
     osc.frequency.exponentialRampToValueAtTime(freq * 1.35, t + 0.08);
     g.gain.setValueAtTime(0.035, t);
@@ -311,6 +421,7 @@ export class AudioEngine {
 
   fury(): void {
     if (!this.ctx || !this.sfxBus || this.muted) return;
+    this.kickResume();
     const ctx = this.ctx;
     const t = ctx.currentTime;
     for (let i = 0; i < 3; i++) {
@@ -318,10 +429,10 @@ export class AudioEngine {
       osc.type = "sawtooth";
       const f = ctx.createBiquadFilter();
       f.type = "lowpass";
-      f.frequency.value = 420;
+      f.frequency.value = maxFilterHz(ctx.sampleRate, 420);
       const g = ctx.createGain();
-      osc.frequency.setValueAtTime(70 * (i + 1), t);
-      osc.frequency.exponentialRampToValueAtTime(110 * (i + 1), t + 0.4);
+      osc.frequency.setValueAtTime(clamp(70 * (i + 1), 40, 280), t);
+      osc.frequency.exponentialRampToValueAtTime(clamp(110 * (i + 1), 50, 360), t + 0.4);
       g.gain.setValueAtTime(0.028, t + i * 0.05);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
       osc.connect(f);
@@ -334,15 +445,21 @@ export class AudioEngine {
 
   hydrant(): void {
     if (!this.ctx) return;
+    this.kickResume();
     this.playWater(this.ctx.currentTime, 0.9);
   }
 
   private duck(t: number, mag: number): void {
     if (!this.engineBus) return;
     const drop = clamp(1 - mag * 0.22, 0.55, 0.92);
-    this.engineBus.gain.cancelScheduledValues(t);
-    this.engineBus.gain.setTargetAtTime(drop, t, 0.02);
-    this.engineBus.gain.setTargetAtTime(1, t + 0.12, 0.12);
+    const g = this.engineBus.gain;
+    try {
+      g.cancelAndHoldAtTime(t);
+      g.setTargetAtTime(drop, t, 0.02);
+      g.setTargetAtTime(1, t + 0.12, 0.12);
+    } catch {
+      g.value = 1;
+    }
   }
 
   private playGlass(t: number, mag: number): void {
@@ -352,8 +469,9 @@ export class AudioEngine {
       const o = ctx.createOscillator();
       o.type = "sine";
       const g = ctx.createGain();
-      o.frequency.setValueAtTime(freq * (0.96 + Math.random() * 0.08), t);
-      g.gain.setValueAtTime(0.03 * mag, t);
+      const hz = clamp(freq * (0.96 + Math.random() * 0.08), 400, maxFilterHz(ctx.sampleRate, 5200));
+      o.frequency.setValueAtTime(hz, t);
+      g.gain.setValueAtTime(Math.max(0.001, 0.03 * mag), t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
       o.connect(g);
       g.connect(this.sfxBus!);
@@ -370,16 +488,60 @@ export class AudioEngine {
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.12 * mag, t);
+    g.gain.setValueAtTime(Math.max(0.001, 0.12 * mag), t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
     src.connect(g);
     g.connect(this.sfxBus);
     src.start(t);
+    src.stop(t + 0.55);
   }
 
   private applyMute(): void {
     if (!this.master || !this.ctx) return;
-    this.master.gain.setTargetAtTime(this.muted ? 0 : 0.7, this.ctx.currentTime, 0.04);
+    const t = this.ctx.currentTime;
+    setParam(this.master.gain, this.muted ? 0 : 0.7, t, 0.04);
+  }
+
+  private kickResume(): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state === "closed" || ctx.state === "running") return;
+    if (document.visibilityState === "hidden") return;
+    void this.resume();
+  }
+
+  private bindResume(): void {
+    const kick = () => {
+      if (document.visibilityState === "visible") void this.resume();
+    };
+    this.ctx?.addEventListener("statechange", kick);
+    if (this.resumeBound) return;
+    this.resumeBound = true;
+    window.addEventListener("focus", kick);
+    window.addEventListener("pointerdown", kick);
+    window.addEventListener("keydown", kick);
+    document.addEventListener("visibilitychange", kick);
+  }
+
+  private dropGraph(): void {
+    this.ctx = null;
+    this.master = null;
+    this.engineBus = null;
+    this.sfxBus = null;
+    this.engineOsc = null;
+    this.engineOsc2 = null;
+    this.engineFilter = null;
+    this.engineGain = null;
+    this.rumble = null;
+    this.rumbleGain = null;
+    this.tireFilter = null;
+    this.tireGain = null;
+    this.skidFilter = null;
+    this.skidGain = null;
+    this.windFilter = null;
+    this.windGain = null;
+    this.graph = [];
+    this.buffers.clear();
+    this.started = false;
   }
 
   private bakeHits(ctx: AudioContext): void {
@@ -390,6 +552,34 @@ export class AudioEngine {
     this.buffers.set("hollow", [bake(ctx, 0.36, hollowHit)]);
     this.buffers.set("plastic", [bake(ctx, 0.18, plasticHit), bake(ctx, 0.16, plasticHit)]);
     this.buffers.set("water", [bake(ctx, 0.42, waterHit)]);
+  }
+}
+
+function finite(value: number, fallback: number): number {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function maxFilterHz(sampleRate: number, want: number): number {
+  const nyquist = Math.max(2000, sampleRate * 0.5);
+  return clamp(want, 40, nyquist * 0.42);
+}
+
+function loopNoise(ctx: AudioContext, buf: AudioBuffer): AudioBufferSourceNode {
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.loop = true;
+  src.loopStart = 0;
+  src.loopEnd = buf.duration;
+  return src;
+}
+
+function setParam(param: AudioParam, value: number, t: number, tc: number): void {
+  const v = finite(value, param.value);
+  try {
+    param.cancelAndHoldAtTime(t);
+    param.setTargetAtTime(v, t, tc);
+  } catch {
+    param.value = v;
   }
 }
 

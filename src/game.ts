@@ -91,7 +91,7 @@ export class Game {
       if (clicked && !this.starting) {
         this.starting = true;
         void this.audio.start();
-        this.input.consumeMouse();
+        this.input.resetUnlockedAim();
         this.input.requestLock();
         this.camRot = this.player.angle + Math.PI / 2;
         this.camX = this.player.x;
@@ -106,13 +106,13 @@ export class Game {
     if (this.mode === "pause") {
       if (this.input.consumeRestart() || this.input.down("KeyR")) {
         this.reset(true);
-        this.input.consumeMouse();
+        this.input.resetUnlockedAim();
         this.input.requestLock();
         this.mode = "play";
         return;
       }
       if (clicked) {
-        this.input.consumeMouse();
+        this.input.resetUnlockedAim();
         this.input.requestLock();
         this.mode = "play";
       }
@@ -124,7 +124,7 @@ export class Game {
       this.fx.update(dt);
       if (clicked || this.input.consumeRestart() || this.input.down("KeyR")) {
         this.reset(true);
-        this.input.consumeMouse();
+        this.input.resetUnlockedAim();
         this.input.requestLock();
         this.mode = "play";
       }
@@ -137,7 +137,10 @@ export class Game {
       this.audio.setEngine(0, 0, 0);
       return;
     }
-    if (clicked && !this.input.pointerLocked) this.input.requestLock();
+    if (clicked && !this.input.pointerLocked) {
+      this.input.resetUnlockedAim();
+      this.input.requestLock();
+    }
 
     if (this.input.consumeRestart() || this.input.down("KeyR")) {
       this.reset(true);
@@ -147,10 +150,7 @@ export class Game {
     const timeScale = this.fx.update(dt);
     const sdt = dt * timeScale;
 
-    const unlockedSteer = this.input.pointerLocked
-      ? 0
-      : clamp((this.input.mouseX - this.width / 2) / (this.width * 0.32), -1, 1);
-    this.player.update(sdt, this.input, unlockedSteer);
+    this.player.update(sdt, this.input);
     const streamed = this.world.stream(this.player.x, this.player.y);
     this.smash.sync(streamed.loaded, streamed.unloaded, this.seed, this.player.x, this.player.y);
     const wall = resolveBuildings(
@@ -404,7 +404,7 @@ export class Game {
       ctx.textAlign = "center";
       ctx.fillStyle = "#ffe27a";
       ctx.font = '800 18px "Barlow Condensed", sans-serif';
-      ctx.fillText("CLICK TO CAPTURE MOUSE  ·  or steer with A / D", w / 2, h - 48);
+      ctx.fillText("CLICK TO CAPTURE MOUSE  ·  move mouse or A / D to steer", w / 2, h - 48);
     }
 
     this.drawMinimap(ctx, w);

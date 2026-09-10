@@ -1,3 +1,5 @@
+const UNLOCK_ARM_PX = 8;
+
 export class Input {
   readonly keys = new Set<string>();
   mouseDx = 0;
@@ -5,10 +7,13 @@ export class Input {
   mouseX = 0;
   mouseY = 0;
   pointerLocked = false;
+  /** Unlocked mouse steer stays 0 until the player actually moves the mouse. */
+  unlockedAimLive = false;
   clickQueued = false;
   escapeQueued = false;
   muteQueued = false;
   restartQueued = false;
+  private unlockArm = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", this.onKeyDown);
@@ -80,6 +85,14 @@ export class Input {
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
+  /** Call when a run starts or pointer lock drops so a parked cursor cannot steer. */
+  resetUnlockedAim(): void {
+    this.unlockedAimLive = false;
+    this.unlockArm = 0;
+    this.mouseDx = 0;
+    this.mouseDy = 0;
+  }
+
   private onKeyDown = (e: KeyboardEvent): void => {
     if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
     if (e.repeat) {
@@ -101,7 +114,10 @@ export class Input {
   };
 
   private onLockChange = (): void => {
-    this.pointerLocked = document.pointerLockElement === this.canvas;
+    const locked = document.pointerLockElement === this.canvas;
+    const dropped = this.pointerLocked && !locked;
+    this.pointerLocked = locked;
+    if (dropped) this.resetUnlockedAim();
   };
 
   private onMouseDown = (e: MouseEvent): void => {
@@ -111,7 +127,17 @@ export class Input {
   private onMouseMove = (e: MouseEvent): void => {
     this.mouseX = e.clientX;
     this.mouseY = e.clientY;
-    if (!this.pointerLocked) return;
+    if (this.pointerLocked) {
+      this.mouseDx += e.movementX;
+      this.mouseDy += e.movementY;
+      return;
+    }
+    const mag = Math.hypot(e.movementX, e.movementY);
+    if (!this.unlockedAimLive) {
+      this.unlockArm += mag;
+      if (this.unlockArm < UNLOCK_ARM_PX) return;
+      this.unlockedAimLive = true;
+    }
     this.mouseDx += e.movementX;
     this.mouseDy += e.movementY;
   };

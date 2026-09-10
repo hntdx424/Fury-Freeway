@@ -38,6 +38,7 @@ export class Game {
   camZoom = 1;
   width = 1;
   height = 1;
+  dpr = 1;
   private rng = mulberry32(4242);
   private starting = false;
 
@@ -47,9 +48,10 @@ export class Game {
     this.reset(false);
   }
 
-  resize(w: number, h: number): void {
+  resize(w: number, h: number, dpr = 1): void {
     this.width = w;
     this.height = h;
+    this.dpr = dpr;
   }
 
   reset(keepMode: boolean): void {
@@ -211,7 +213,7 @@ export class Game {
   draw(ctx: CanvasRenderingContext2D): void {
     const w = this.width;
     const h = this.height;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
     const shake = this.mode === "play" ? this.fx.shakeOffset() : { x: 0, y: 0 };
@@ -376,29 +378,30 @@ export class Game {
   }
 
   private drawTitle(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+    const s = clamp(Math.min(w / 1280, h / 800), 0.55, 1);
     ctx.fillStyle = "rgba(6,6,10,0.55)";
     ctx.fillRect(0, 0, w, h);
     ctx.save();
     ctx.textAlign = "center";
     ctx.fillStyle = "#ff3b2f";
-    ctx.font = '800 22px "Barlow Condensed", sans-serif';
-    ctx.fillText("STRESS RELIEF PROTOCOL", w / 2, h * 0.22);
+    ctx.font = `800 ${Math.round(20 * s)}px "Barlow Condensed", sans-serif`;
+    ctx.fillText("STRESS RELIEF PROTOCOL", w / 2, h * 0.2);
     ctx.fillStyle = "#fff";
-    ctx.font = '800 96px "Bebas Neue", "Barlow Condensed", sans-serif';
+    ctx.font = `800 ${Math.round(92 * s)}px "Bebas Neue", "Barlow Condensed", sans-serif`;
     ctx.shadowColor = "#ff2a1a";
-    ctx.shadowBlur = 24;
-    ctx.fillText("FURY FREEWAY", w / 2, h * 0.34);
+    ctx.shadowBlur = 24 * s;
+    ctx.fillText("FURY FREEWAY", w / 2, h * 0.32);
     ctx.shadowBlur = 0;
     ctx.fillStyle = "#ffb199";
-    ctx.font = '600 22px "Barlow Condensed", sans-serif';
-    ctx.fillText("Drive around. Destroy everything. There is no fail state.", w / 2, h * 0.4);
+    ctx.font = `600 ${Math.round(20 * s)}px "Barlow Condensed", sans-serif`;
+    ctx.fillText("Drive around. Destroy everything. There is no fail state.", w / 2, h * 0.38);
 
     ctx.fillStyle = "#fff";
-    ctx.font = '800 28px "Barlow Condensed", sans-serif';
-    ctx.fillText("CLICK TO UNLEASH", w / 2, h * 0.5);
+    ctx.font = `800 ${Math.round(26 * s)}px "Barlow Condensed", sans-serif`;
+    ctx.fillText("CLICK TO UNLEASH", w / 2, h * 0.48);
     ctx.fillStyle = "rgba(255,255,255,0.55)";
-    ctx.font = '600 16px "Barlow Condensed", sans-serif';
-    ctx.fillText("captures the mouse  ·  Esc releases", w / 2, h * 0.54);
+    ctx.font = `600 ${Math.round(15 * s)}px "Barlow Condensed", sans-serif`;
+    ctx.fillText("captures the mouse  ·  Esc releases", w / 2, h * 0.52);
 
     const lines = [
       "STEER    Move the mouse   (A / D also works)",
@@ -407,12 +410,12 @@ export class Game {
       "HANDBRAKE   Space     drift & snap-turn",
       "RESTART     R",
     ];
-    ctx.font = '600 20px "Barlow Condensed", sans-serif';
+    ctx.font = `600 ${Math.round(18 * s)}px "Barlow Condensed", sans-serif`;
     ctx.textAlign = "left";
-    const left = w / 2 - 210;
+    const left = w / 2 - 200 * s;
     lines.forEach((line, i) => {
       ctx.fillStyle = i % 2 === 0 ? "#fff" : "#ffb199";
-      ctx.fillText(line, left, h * 0.64 + i * 28);
+      ctx.fillText(line, left, h * 0.6 + i * 26 * s);
     });
     ctx.restore();
   }

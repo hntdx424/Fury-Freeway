@@ -18,8 +18,9 @@ function fit(): void {
   const h = Math.max(1, window.innerHeight);
   canvas.width = Math.floor(w * dpr);
   canvas.height = Math.floor(h * dpr);
-  gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  game.resize(w, h);
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
+  game.resize(w, h, dpr);
 }
 
 window.addEventListener("resize", fit);

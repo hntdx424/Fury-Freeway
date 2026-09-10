@@ -347,9 +347,11 @@ export class Game {
     ctx.fillText("MOUSE STEER  ·  WASD DRIVE  ·  SPACE DRIFT  ·  R NEW CITY  ·  M MUTE", w - 28, h - 22);
     if (this.audio.muted) {
       ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(w / 2 - 70, 10, 140, 32);
       ctx.fillStyle = "#ffe27a";
-      ctx.font = '800 16px "Barlow Condensed", sans-serif';
-      ctx.fillText("MUTED", w / 2, 28);
+      ctx.font = '800 22px "Barlow Condensed", sans-serif';
+      ctx.fillText("MUTED", w / 2, 33);
     }
     if (!this.input.pointerLocked) {
       ctx.textAlign = "center";
@@ -428,7 +430,7 @@ export class Game {
       "GAS      W  or  ↑",
       "BRAKE    S  or  ↓     (hold to reverse)",
       "HANDBRAKE   Space     drift & snap-turn",
-      "MUTE / NEW CITY     M     ·     R",
+      "MUTE        M          NEW CITY     R",
     ];
     ctx.font = `600 ${Math.round(18 * s)}px "Barlow Condensed", sans-serif`;
     ctx.textAlign = "left";

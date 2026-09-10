@@ -89,7 +89,7 @@ export class Game {
         this.camRot = this.player.angle + Math.PI / 2;
         this.camX = this.player.x;
         this.camY = this.player.y;
-        this.camZoom = 1.22;
+        this.camZoom = 1.55;
         this.mode = "play";
         this.starting = false;
       }
@@ -208,7 +208,7 @@ export class Game {
     this.camX = lerp(this.camX, tx, 1 - Math.pow(0.0002, sdt));
     this.camY = lerp(this.camY, ty, 1 - Math.pow(0.0002, sdt));
     this.camRot = lerpAngle(this.camRot, this.player.angle + Math.PI / 2, 1 - Math.pow(0.02, sdt));
-    const zTarget = clamp(1.28 - this.player.speed / 1800, 0.92, 1.32);
+    const zTarget = clamp(1.58 - this.player.speed / 2000, 1.18, 1.62);
     this.camZoom = lerp(this.camZoom, zTarget, 1 - Math.pow(0.08, sdt));
 
     this.audio.setEngine(this.player.speed, this.input.throttle(), this.player.skid);

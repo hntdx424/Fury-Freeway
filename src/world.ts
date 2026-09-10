@@ -145,8 +145,17 @@ export function nearestRoadAxis(x: number, y: number): { x: number; y: number; h
 }
 
 export function drawGround(ctx: CanvasRenderingContext2D): void {
-  ctx.fillStyle = "#14141c";
-  ctx.fillRect(-80, -80, WORLD + 160, WORLD + 160);
+  ctx.fillStyle = "#08080c";
+  ctx.fillRect(-20000, -20000, 40000, 40000);
+
+  ctx.fillStyle = "#12121a";
+  ctx.fillRect(-240, -240, WORLD + 480, WORLD + 480);
+
+  ctx.fillStyle = "#3a3a44";
+  ctx.fillRect(-36, -36, WORLD + 72, 36);
+  ctx.fillRect(-36, WORLD, WORLD + 72, 36);
+  ctx.fillRect(-36, -36, 36, WORLD + 72);
+  ctx.fillRect(WORLD, -36, 36, WORLD + 72);
 
   ctx.fillStyle = "#1c1c26";
   ctx.fillRect(0, 0, WORLD, WORLD);

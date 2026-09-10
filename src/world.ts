@@ -1,11 +1,11 @@
-import { mulberry32, pick, rand, shade } from "./math";
+import { hash2, mulberry32, pick, rand, shade } from "./math";
 
 export const ROAD_W = 128;
 export const BLOCK = 348;
 export const CELL = BLOCK + ROAD_W;
-export const GRID = 6;
-export const WORLD = CELL * GRID + ROAD_W;
 export const SIDEWALK = 22;
+export const LOAD_R = 3;
+export const UNLOAD_R = 5;
 
 export type Building = {
   x: number;
@@ -21,94 +21,49 @@ export type Building = {
 
 export type Lamp = { x: number; y: number; on: boolean };
 
-export type LotKind = "building" | "lot" | "plaza";
+export type LotKind = "building" | "lot" | "plaza" | "park" | "market" | "industrial";
+
+export type District = "downtown" | "lots" | "plaza" | "industrial" | "market" | "park" | "suburb";
 
 export type Block = {
-  ix: number;
-  iy: number;
+  cx: number;
+  cy: number;
   kind: LotKind;
   x: number;
   y: number;
   w: number;
   h: number;
+  district: District;
 };
 
-export type World = {
-  seed: number;
+export type Chunk = {
+  cx: number;
+  cy: number;
+  key: string;
+  district: District;
   buildings: Building[];
   lamps: Lamp[];
-  blocks: Block[];
-  spawnX: number;
-  spawnY: number;
+  block: Block;
 };
 
-const ROOF_PALETTE = ["#5a3d4a", "#3d4a5c", "#4a3d36", "#35524a", "#4d4458", "#5c4034", "#334155"];
+const ROOF_PALETTE: Record<District, string[]> = {
+  downtown: ["#4a3d58", "#3d4a5c", "#334155", "#5a3d4a"],
+  lots: ["#4a3d36", "#3d4a3a"],
+  plaza: ["#35524a", "#3d4a5c"],
+  industrial: ["#4a4538", "#3a3a32", "#5c4034"],
+  market: ["#5c4034", "#5a3d4a"],
+  park: ["#35524a", "#2d4a3a"],
+  suburb: ["#5a3d4a", "#4d4458", "#4a3d36"],
+};
+
 const ACCENTS = ["#ff5a3c", "#ffb020", "#3cf0c5", "#ff4f8b", "#7ad7ff"];
 
-export function createWorld(seed = 4242): World {
-  const rng = mulberry32(seed);
-  const buildings: Building[] = [];
-  const lamps: Lamp[] = [];
-  const blocks: Block[] = [];
+export function chunkCoord(v: number): number {
+  return Math.floor(v / CELL);
+}
 
-  for (let iy = 0; iy < GRID; iy++) {
-    for (let ix = 0; ix < GRID; ix++) {
-      const x = ix * CELL + ROAD_W;
-      const y = iy * CELL + ROAD_W;
-      const roll = rng();
-      const kind: LotKind = roll < 0.16 ? "lot" : roll < 0.22 ? "plaza" : "building";
-      blocks.push({ ix, iy, kind, x, y, w: BLOCK, h: BLOCK });
-
-      if (kind === "building") {
-        const inset = SIDEWALK + rand(rng, 4, 14);
-        const bx = x + inset;
-        const by = y + inset;
-        const bw = BLOCK - inset * 2;
-        const bh = BLOCK - inset * 2;
-        const roof = pick(rng, ROOF_PALETTE);
-        const b: Building = {
-          x: bx,
-          y: by,
-          w: bw,
-          h: bh,
-          height: rand(rng, 28, 64),
-          roof,
-          side: shade(roof, -0.22),
-          accent: pick(rng, ACCENTS),
-          windows: [],
-        };
-        const cols = Math.max(3, Math.floor(bw / 28));
-        const rows = Math.max(3, Math.floor(bh / 28));
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            if (rng() < 0.18) continue;
-            b.windows.push({
-              x: 8 + c * (bw / cols),
-              y: 8 + r * (bh / rows),
-              w: 8,
-              h: 6,
-            });
-          }
-        }
-        buildings.push(b);
-      }
-    }
-  }
-
-  for (let i = 0; i <= GRID; i++) {
-    for (let j = 0; j <= GRID; j++) {
-      const x = i * CELL + ROAD_W / 2;
-      const y = j * CELL + ROAD_W / 2;
-      lamps.push({ x: x - ROAD_W / 2 + 14, y: y - ROAD_W / 2 + 14, on: rng() > 0.08 });
-      if (i < GRID) lamps.push({ x: x + 36, y: y - ROAD_W / 2 + 14, on: true });
-      if (j < GRID) lamps.push({ x: x - ROAD_W / 2 + 14, y: y + 36, on: true });
-    }
-  }
-
-  const spawnX = ROAD_W / 2 + CELL * 2;
-  const spawnY = ROAD_W / 2 + CELL * 3;
-
-  return { seed, buildings, lamps, blocks, spawnX, spawnY };
+export function chunkKey(cx: number, cy: number): string {
+  return `${cx},${cy}`;
 }
 
 export function roadCenterX(i: number): number {
@@ -120,92 +75,233 @@ export function roadCenterY(j: number): number {
 }
 
 export function nearestRoadAxis(x: number, y: number): { x: number; y: number; horiz: boolean } {
-  let bestX = roadCenterX(0);
-  let bestDx = Infinity;
-  for (let i = 0; i <= GRID; i++) {
-    const rx = roadCenterX(i);
-    const d = Math.abs(x - rx);
-    if (d < bestDx) {
-      bestDx = d;
-      bestX = rx;
-    }
-  }
-  let bestY = roadCenterY(0);
-  let bestDy = Infinity;
-  for (let j = 0; j <= GRID; j++) {
-    const ry = roadCenterY(j);
-    const d = Math.abs(y - ry);
-    if (d < bestDy) {
-      bestDy = d;
-      bestY = ry;
-    }
-  }
-  if (bestDx < bestDy) return { x: bestX, y, horiz: false };
-  return { x, y: bestY, horiz: true };
+  const ix = Math.round((x - ROAD_W / 2) / CELL);
+  const iy = Math.round((y - ROAD_W / 2) / CELL);
+  const rx = roadCenterX(ix);
+  const ry = roadCenterY(iy);
+  if (Math.abs(x - rx) < Math.abs(y - ry)) return { x: rx, y, horiz: false };
+  return { x, y: ry, horiz: true };
 }
 
-export function drawGround(ctx: CanvasRenderingContext2D): void {
-  ctx.fillStyle = "#08080c";
-  ctx.fillRect(-20000, -20000, 40000, 40000);
+export function districtAt(seed: number, cx: number, cy: number): District {
+  const rng = mulberry32(hash2(Math.floor(cx / 4), Math.floor(cy / 4), seed ^ 0x51ed));
+  const r = rng();
+  if (r < 0.16) return "downtown";
+  if (r < 0.3) return "lots";
+  if (r < 0.4) return "industrial";
+  if (r < 0.5) return "market";
+  if (r < 0.6) return "park";
+  if (r < 0.72) return "plaza";
+  return "suburb";
+}
 
-  ctx.fillStyle = "#12121a";
-  ctx.fillRect(-240, -240, WORLD + 480, WORLD + 480);
+export function generateChunk(worldSeed: number, cx: number, cy: number): Chunk {
+  const key = chunkKey(cx, cy);
+  const rng = mulberry32(hash2(cx, cy, worldSeed));
+  const district = districtAt(worldSeed, cx, cy);
+  const kind = kindForDistrict(district, rng);
+  const x = cx * CELL + ROAD_W;
+  const y = cy * CELL + ROAD_W;
+  const block: Block = { cx, cy, kind, x, y, w: BLOCK, h: BLOCK, district };
+  const buildings: Building[] = [];
+  const lamps: Lamp[] = [];
 
-  ctx.fillStyle = "#3a3a44";
-  ctx.fillRect(-36, -36, WORLD + 72, 36);
-  ctx.fillRect(-36, WORLD, WORLD + 72, 36);
-  ctx.fillRect(-36, -36, 36, WORLD + 72);
-  ctx.fillRect(WORLD, -36, 36, WORLD + 72);
-
-  ctx.fillStyle = "#1c1c26";
-  ctx.fillRect(0, 0, WORLD, WORLD);
-
-  for (let i = 0; i <= GRID; i++) {
-    const x = i * CELL;
-    ctx.fillStyle = "#2a2a33";
-    ctx.fillRect(x, 0, ROAD_W, WORLD);
-    ctx.fillStyle = "#2a2a33";
-    const y = i * CELL;
-    ctx.fillRect(0, y, WORLD, ROAD_W);
+  if (kind === "building" || kind === "industrial") {
+    const split = district === "downtown" && rng() < 0.45;
+    const inset = SIDEWALK + rand(rng, kind === "industrial" ? 8 : 4, kind === "industrial" ? 22 : 16);
+    if (split) {
+      const gap = 14;
+      const bw = (BLOCK - inset * 2 - gap) / 2;
+      const bh = BLOCK - inset * 2;
+      buildings.push(makeBuilding(rng, district, x + inset, y + inset, bw, bh, true));
+      buildings.push(makeBuilding(rng, district, x + inset + bw + gap, y + inset, bw, bh, true));
+    } else {
+      const bw = BLOCK - inset * 2;
+      const bh = BLOCK - inset * 2;
+      const short = district === "suburb" && rng() < 0.4;
+      buildings.push(
+        makeBuilding(
+          rng,
+          district,
+          x + inset + (short ? rand(rng, 0, 40) : 0),
+          y + inset + (short ? rand(rng, 0, 40) : 0),
+          bw - (short ? 40 : 0),
+          bh - (short ? 40 : 0),
+          district === "downtown",
+        ),
+      );
+    }
   }
 
-  ctx.strokeStyle = "rgba(255,214,90,0.85)";
+  const lx = cx * CELL + 14;
+  const ly = cy * CELL + 14;
+  lamps.push({ x: lx, y: ly, on: rng() > 0.1 });
+  lamps.push({ x: lx + 40, y: ly, on: true });
+  lamps.push({ x: lx, y: ly + 40, on: true });
+
+  return { cx, cy, key, district, buildings, lamps, block };
+}
+
+function kindForDistrict(d: District, rng: () => number): LotKind {
+  if (d === "lots") return rng() < 0.78 ? "lot" : "building";
+  if (d === "plaza") return rng() < 0.7 ? "plaza" : "building";
+  if (d === "park") return rng() < 0.85 ? "park" : "plaza";
+  if (d === "market") return rng() < 0.7 ? "market" : "building";
+  if (d === "industrial") return rng() < 0.55 ? "industrial" : "lot";
+  if (d === "downtown") return rng() < 0.12 ? "lot" : "building";
+  return rng() < 0.12 ? "lot" : rng() < 0.2 ? "plaza" : "building";
+}
+
+function makeBuilding(
+  rng: () => number,
+  district: District,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  tall: boolean,
+): Building {
+  const roof = pick(rng, ROOF_PALETTE[district]);
+  const b: Building = {
+    x,
+    y,
+    w,
+    h,
+    height: tall ? rand(rng, 42, 78) : district === "industrial" ? rand(rng, 18, 36) : rand(rng, 24, 52),
+    roof,
+    side: shade(roof, -0.22),
+    accent: pick(rng, ACCENTS),
+    windows: [],
+  };
+  const cols = Math.max(3, Math.floor(w / 30));
+  const rows = Math.max(3, Math.floor(h / 30));
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (rng() < (tall ? 0.12 : 0.22)) continue;
+      b.windows.push({
+        x: 8 + c * (w / cols),
+        y: 8 + r * (h / rows),
+        w: 8,
+        h: 6,
+      });
+    }
+  }
+  return b;
+}
+
+export class WorldStream {
+  seed: number;
+  chunks = new Map<string, Chunk>();
+  spawnX = ROAD_W / 2;
+  spawnY = ROAD_W / 2;
+
+  constructor(seed: number) {
+    this.seed = seed;
+  }
+
+  get buildings(): Building[] {
+    const out: Building[] = [];
+    for (const c of this.chunks.values()) out.push(...c.buildings);
+    return out;
+  }
+
+  get lamps(): Lamp[] {
+    const out: Lamp[] = [];
+    for (const c of this.chunks.values()) out.push(...c.lamps);
+    return out;
+  }
+
+  get blocks(): Block[] {
+    return [...this.chunks.values()].map((c) => c.block);
+  }
+
+  stream(px: number, py: number): { loaded: Chunk[]; unloaded: string[] } {
+    const pcx = chunkCoord(px);
+    const pcy = chunkCoord(py);
+    const loaded: Chunk[] = [];
+    for (let dy = -LOAD_R; dy <= LOAD_R; dy++) {
+      for (let dx = -LOAD_R; dx <= LOAD_R; dx++) {
+        const cx = pcx + dx;
+        const cy = pcy + dy;
+        const k = chunkKey(cx, cy);
+        if (!this.chunks.has(k)) {
+          const ch = generateChunk(this.seed, cx, cy);
+          this.chunks.set(k, ch);
+          loaded.push(ch);
+        }
+      }
+    }
+    const unloaded: string[] = [];
+    for (const [k, ch] of this.chunks) {
+      if (Math.abs(ch.cx - pcx) > UNLOAD_R || Math.abs(ch.cy - pcy) > UNLOAD_R) {
+        this.chunks.delete(k);
+        unloaded.push(k);
+      }
+    }
+    return { loaded, unloaded };
+  }
+}
+
+export function drawGround(ctx: CanvasRenderingContext2D, camX: number, camY: number, chunks: Iterable<Chunk>): void {
+  const pad = CELL * (LOAD_R + 2);
+  ctx.fillStyle = "#0a0a10";
+  ctx.fillRect(camX - pad, camY - pad, pad * 2, pad * 2);
+
+  ctx.fillStyle = "#2a2a33";
+  for (const ch of chunks) {
+    const ox = ch.cx * CELL;
+    const oy = ch.cy * CELL;
+    ctx.fillRect(ox, oy, ROAD_W, CELL);
+    ctx.fillRect(ox, oy, CELL, ROAD_W);
+  }
+
+  ctx.strokeStyle = "rgba(255,214,90,0.82)";
   ctx.lineWidth = 3;
   ctx.setLineDash([18, 16]);
-  ctx.lineDashOffset = 0;
-  for (let i = 0; i <= GRID; i++) {
-    const cx = roadCenterX(i);
+  for (const ch of chunks) {
+    const cx = roadCenterX(ch.cx);
+    const cy = roadCenterY(ch.cy);
+    const ox = ch.cx * CELL;
+    const oy = ch.cy * CELL;
     ctx.beginPath();
-    ctx.moveTo(cx, 8);
-    ctx.lineTo(cx, WORLD - 8);
+    ctx.moveTo(cx, oy + 8);
+    ctx.lineTo(cx, oy + CELL);
     ctx.stroke();
-    const cy = roadCenterY(i);
     ctx.beginPath();
-    ctx.moveTo(8, cy);
-    ctx.lineTo(WORLD - 8, cy);
+    ctx.moveTo(ox + 8, cy);
+    ctx.lineTo(ox + CELL, cy);
     ctx.stroke();
   }
   ctx.setLineDash([]);
 
-  ctx.strokeStyle = "rgba(230,230,240,0.28)";
+  ctx.strokeStyle = "rgba(230,230,240,0.22)";
   ctx.lineWidth = 2;
-  for (let i = 0; i <= GRID; i++) {
-    const x = i * CELL;
-    ctx.strokeRect(x + 10, 10, ROAD_W - 20, WORLD - 20);
-    const y = i * CELL;
+  for (const ch of chunks) {
+    const ox = ch.cx * CELL;
+    const oy = ch.cy * CELL;
+    ctx.strokeRect(ox + 10, oy + 10, ROAD_W - 20, CELL - 20);
     ctx.beginPath();
-    ctx.moveTo(10, y + 10);
-    ctx.lineTo(WORLD - 10, y + 10);
-    ctx.moveTo(10, y + ROAD_W - 10);
-    ctx.lineTo(WORLD - 10, y + ROAD_W - 10);
+    ctx.moveTo(ox + 10, oy + 10);
+    ctx.lineTo(ox + CELL - 10, oy + 10);
+    ctx.moveTo(ox + 10, oy + ROAD_W - 10);
+    ctx.lineTo(ox + CELL - 10, oy + ROAD_W - 10);
     ctx.stroke();
   }
-
 }
 
-export function drawSidewalks(ctx: CanvasRenderingContext2D, world: World): void {
-  ctx.fillStyle = "#3e3e4a";
-  for (const block of world.blocks) {
+export function drawSidewalks(ctx: CanvasRenderingContext2D, chunks: Iterable<Chunk>): void {
+  for (const ch of chunks) {
+    const block = ch.block;
+    if (block.kind === "park") {
+      ctx.fillStyle = "#24382c";
+      ctx.fillRect(block.x, block.y, block.w, block.h);
+      ctx.fillStyle = "#2e4a38";
+      ctx.beginPath();
+      ctx.arc(block.x + block.w / 2, block.y + block.h / 2, 56, 0, Math.PI * 2);
+      ctx.fill();
+      continue;
+    }
+    ctx.fillStyle = block.kind === "industrial" ? "#3a3a3a" : "#3e3e4a";
     ctx.fillRect(block.x, block.y, block.w, block.h);
     if (block.kind === "lot") {
       ctx.fillStyle = "#252530";
@@ -219,7 +315,6 @@ export function drawSidewalks(ctx: CanvasRenderingContext2D, world: World): void
         ctx.lineTo(px, block.y + block.h - 18);
         ctx.stroke();
       }
-      ctx.fillStyle = "#3e3e4a";
     } else if (block.kind === "plaza") {
       ctx.fillStyle = "#2c3340";
       ctx.fillRect(block.x + 10, block.y + 10, block.w - 20, block.h - 20);
@@ -227,7 +322,12 @@ export function drawSidewalks(ctx: CanvasRenderingContext2D, world: World): void
       ctx.beginPath();
       ctx.arc(block.x + block.w / 2, block.y + block.h / 2, 48, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#3e3e4a";
+    } else if (block.kind === "market") {
+      ctx.fillStyle = "#3a322c";
+      ctx.fillRect(block.x + 10, block.y + 10, block.w - 20, block.h - 20);
+    } else if (block.kind === "industrial") {
+      ctx.fillStyle = "#2a2a28";
+      ctx.fillRect(block.x + 12, block.y + 12, block.w - 24, block.h - 24);
     }
   }
 }
@@ -266,10 +366,8 @@ export function drawBuildings(
     ctx.lineWidth = 2;
     ctx.strokeRect(b.x + ox, b.y + oy, b.w, b.h);
 
-    ctx.fillStyle = "rgba(255,220,140,0.55)";
     for (const w of b.windows) {
-      if ((w.x + w.y) % 3 === 0) ctx.fillStyle = "rgba(255,220,140,0.7)";
-      else ctx.fillStyle = "rgba(80,140,180,0.28)";
+      ctx.fillStyle = (w.x + w.y) % 3 === 0 ? "rgba(255,220,140,0.7)" : "rgba(80,140,180,0.28)";
       ctx.fillRect(b.x + ox + w.x, b.y + oy + w.y, w.w, w.h);
     }
 
@@ -359,8 +457,5 @@ export function resolveBuildings(
       vy -= col.ny * vn * 1.35;
     }
   }
-  x = Math.max(r + 4, Math.min(WORLD - r - 4, x));
-  y = Math.max(r + 4, Math.min(WORLD - r - 4, y));
   return { x, y, vx, vy, hit };
 }
-

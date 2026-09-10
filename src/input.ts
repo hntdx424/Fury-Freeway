@@ -7,6 +7,7 @@ export class Input {
   pointerLocked = false;
   clickQueued = false;
   escapeQueued = false;
+  muteQueued = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", this.onKeyDown);
@@ -57,6 +58,12 @@ export class Input {
     return true;
   }
 
+  consumeMute(): boolean {
+    if (!this.muteQueued) return false;
+    this.muteQueued = false;
+    return true;
+  }
+
   requestLock(): void {
     if (this.pointerLocked) return;
     void this.canvas.requestPointerLock();
@@ -74,6 +81,7 @@ export class Input {
     }
     this.keys.add(e.code);
     if (e.code === "Escape") this.escapeQueued = true;
+    if (e.code === "KeyM") this.muteQueued = true;
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {

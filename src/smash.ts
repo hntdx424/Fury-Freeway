@@ -1,18 +1,18 @@
-import { clamp, pick, rand, randInt } from "./math";
+import { hash2, mulberry32, pick, rand, randInt } from "./math";
 import { drawCar } from "./vehicle";
 import {
   BLOCK,
   CELL,
-  GRID,
   ROAD_W,
   SIDEWALK,
-  WORLD,
   circleVsAabb,
+  chunkKey,
+  chunkCoord,
   nearestRoadAxis,
   roadCenterX,
   roadCenterY,
   type Building,
-  type World,
+  type Chunk,
 } from "./world";
 import type { Fx } from "./fx";
 import type { AudioEngine } from "./audio";
@@ -50,6 +50,7 @@ export type Prop = {
   wrecked: boolean;
   gone: boolean;
   smoke: number;
+  chunkKey: string;
   special?: string;
 };
 
@@ -83,74 +84,112 @@ export class Smashables {
   props: Prop[] = [];
   destroyed = 0;
 
-  spawn(world: World, rng: () => number): void {
+  clear(): void {
     this.props.length = 0;
     this.destroyed = 0;
+  }
 
-    for (const block of world.blocks) {
-      const density = block.kind === "lot" ? 22 : block.kind === "plaza" ? 16 : 10;
-      for (let n = 0; n < density; n++) {
-        let x = 0;
-        let y = 0;
-        if (block.kind === "building") {
-          const edge = randInt(rng, 0, 3);
-          if (edge === 0) {
-            x = block.x + SIDEWALK * 0.45 + rng() * (BLOCK - SIDEWALK);
-            y = block.y + 8 + rng() * (SIDEWALK - 6);
-          } else if (edge === 1) {
-            x = block.x + SIDEWALK * 0.45 + rng() * (BLOCK - SIDEWALK);
-            y = block.y + BLOCK - 8 - rng() * (SIDEWALK - 6);
-          } else if (edge === 2) {
-            x = block.x + 8 + rng() * (SIDEWALK - 6);
-            y = block.y + SIDEWALK * 0.45 + rng() * (BLOCK - SIDEWALK);
-          } else {
-            x = block.x + BLOCK - 8 - rng() * (SIDEWALK - 6);
-            y = block.y + SIDEWALK * 0.45 + rng() * (BLOCK - SIDEWALK);
-          }
-        } else {
-          x = block.x + 24 + rng() * (block.w - 48);
-          y = block.y + 24 + rng() * (block.h - 48);
+  sync(loaded: Chunk[], unloaded: string[], worldSeed: number, px: number, py: number): void {
+    if (unloaded.length) {
+      const drop = new Set(unloaded);
+      this.props = this.props.filter((p) => {
+        if (!drop.has(p.chunkKey)) return true;
+        const moving = Math.abs(p.vx) + Math.abs(p.vy) > 18;
+        if (moving && Math.hypot(p.x - px, p.y - py) < CELL * 4) {
+          p.chunkKey = chunkKey(chunkCoord(p.x), chunkCoord(p.y));
+          return true;
         }
-        const kind = block.kind === "lot" && rng() < 0.45 ? "parked" : pick(rng, KINDS);
-        this.props.push(makeProp(kind, x, y, rng));
-      }
+        return false;
+      });
+    }
+    for (const ch of loaded) this.spawnChunk(ch, worldSeed);
+  }
 
-      if (block.kind === "lot") {
-        for (let row = 0; row < 3; row++) {
-          for (let col = 0; col < 5; col++) {
-            if (rng() < 0.22) continue;
-            this.props.push(
-              makeProp(
-                "parked",
-                block.x + 40 + col * 58 + rand(rng, -4, 4),
-                block.y + 50 + row * 90 + rand(rng, -6, 6),
-                rng,
-                rng() * Math.PI * 2 > Math.PI ? Math.PI / 2 : -Math.PI / 2,
-              ),
-            );
-          }
+  private spawnChunk(ch: Chunk, worldSeed: number): void {
+    const rng = mulberry32(hash2(ch.cx, ch.cy, worldSeed ^ 0x9e3779b9));
+    const block = ch.block;
+    const density =
+      block.kind === "lot" ? 10 : block.kind === "plaza" ? 12 : block.kind === "market" ? 14 : block.kind === "industrial" ? 12 : block.kind === "park" ? 8 : 7;
+    const bag: PropKind[] =
+      block.kind === "industrial"
+        ? ["crate", "dumpster", "barrier", "pole", "trash"]
+        : block.kind === "market"
+          ? ["stall", "crate", "trash", "cone", "sign"]
+          : block.kind === "park"
+            ? ["trash", "cone", "sign", "hydrant", "mailbox"]
+            : KINDS;
+
+    for (let n = 0; n < density; n++) {
+      let x = 0;
+      let y = 0;
+      if (block.kind === "building") {
+        const edge = randInt(rng, 0, 3);
+        if (edge === 0) {
+          x = block.x + SIDEWALK * 0.45 + rng() * (BLOCK - SIDEWALK);
+          y = block.y + 8 + rng() * (SIDEWALK - 6);
+        } else if (edge === 1) {
+          x = block.x + SIDEWALK * 0.45 + rng() * (BLOCK - SIDEWALK);
+          y = block.y + BLOCK - 8 - rng() * (SIDEWALK - 6);
+        } else if (edge === 2) {
+          x = block.x + 8 + rng() * (SIDEWALK - 6);
+          y = block.y + SIDEWALK * 0.45 + rng() * (BLOCK - SIDEWALK);
+        } else {
+          x = block.x + BLOCK - 8 - rng() * (SIDEWALK - 6);
+          y = block.y + SIDEWALK * 0.45 + rng() * (BLOCK - SIDEWALK);
+        }
+      } else {
+        x = block.x + 24 + rng() * (block.w - 48);
+        y = block.y + 24 + rng() * (block.h - 48);
+      }
+      const kind = block.kind === "lot" && rng() < 0.4 ? "parked" : pick(rng, bag);
+      this.props.push(makeProp(kind, x, y, rng, undefined, ch.key));
+    }
+
+    if (block.kind === "lot") {
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 5; col++) {
+          if (rng() < 0.28) continue;
+          this.props.push(
+            makeProp(
+              "parked",
+              block.x + 40 + col * 58 + rand(rng, -4, 4),
+              block.y + 50 + row * 90 + rand(rng, -6, 6),
+              rng,
+              rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2,
+              ch.key,
+            ),
+          );
         }
       }
     }
 
-    for (let i = 0; i <= GRID; i++) {
-      for (let k = 0; k < 8; k++) {
-        const along = 40 + rng() * (WORLD - 80);
-        if (rng() < 0.5) {
-          this.props.push(makeProp(pick(rng, ["cone", "barrier", "sign"]), roadCenterX(i) + rand(rng, -42, 42), along, rng));
-        } else {
-          this.props.push(makeProp(pick(rng, ["cone", "hydrant", "pole"]), along, roadCenterY(i) + rand(rng, -42, 42), rng));
-        }
+    for (let k = 0; k < 4; k++) {
+      const along = rng() * CELL;
+      if (rng() < 0.5) {
+        this.props.push(
+          makeProp(pick(rng, ["cone", "barrier", "sign"]), roadCenterX(ch.cx) + rand(rng, -42, 42), ch.cy * CELL + along, rng, undefined, ch.key),
+        );
+      } else {
+        this.props.push(
+          makeProp(pick(rng, ["cone", "hydrant", "pole"]), ch.cx * CELL + along, roadCenterY(ch.cy) + rand(rng, -42, 42), rng, undefined, ch.key),
+        );
       }
     }
 
-    for (let n = 0; n < 18; n++) {
+    if (rng() < 0.38) {
       const axis = rng() < 0.5;
-      const idx = randInt(rng, 0, GRID);
-      const pos = 80 + rng() * (WORLD - 160);
-      const x = axis ? roadCenterX(idx) + rand(rng, -18, 18) : pos;
-      const y = axis ? pos : roadCenterY(idx) + rand(rng, -18, 18);
-      const p = makeProp("traffic", x, y, rng, axis ? (rng() < 0.5 ? -Math.PI / 2 : Math.PI / 2) : rng() < 0.5 ? 0 : Math.PI);
+      const pos = ch.cx * CELL + rng() * CELL;
+      const posY = ch.cy * CELL + rng() * CELL;
+      const x = axis ? roadCenterX(ch.cx) + rand(rng, -16, 16) : pos;
+      const y = axis ? posY : roadCenterY(ch.cy) + rand(rng, -16, 16);
+      const p = makeProp(
+        "traffic",
+        x,
+        y,
+        rng,
+        axis ? (rng() < 0.5 ? -Math.PI / 2 : Math.PI / 2) : rng() < 0.5 ? 0 : Math.PI,
+        ch.key,
+      );
       p.special = "drive";
       this.props.push(p);
     }
@@ -182,15 +221,6 @@ export class Smashables {
         p.vy *= Math.exp(-1.8 * dt);
         p.spin *= Math.exp(-2.2 * dt);
         if (p.wrecked) p.smoke = Math.min(1, p.smoke + dt * 0.4);
-
-        if (p.x < p.r || p.x > WORLD - p.r) {
-          p.vx *= -0.4;
-          p.x = clamp(p.x, p.r, WORLD - p.r);
-        }
-        if (p.y < p.r || p.y > WORLD - p.r) {
-          p.vy *= -0.4;
-          p.y = clamp(p.y, p.r, WORLD - p.r);
-        }
 
         const wall = resolvePropBuildings(p, buildings);
         if (wall > 140 && p.hp > 0) {
@@ -248,7 +278,7 @@ export class Smashables {
         });
         fx.popup(p.x, p.y, pts, smashed);
         fx.burst(p.x, p.y, p.color, impact, p.kind);
-        audio.crash(impact, p.kind === "parked" || p.kind === "traffic" ? 0.8 : 0.35);
+        audio.crash(impact, p.kind);
         if (p.kind === "hydrant" && smashed) {
           fx.spray(p.x, p.y);
           audio.hydrant();
@@ -310,7 +340,7 @@ export type SmashEvent = {
   big: boolean;
 };
 
-function makeProp(kind: PropKind, x: number, y: number, rng: () => number, angle?: number): Prop {
+function makeProp(kind: PropKind, x: number, y: number, rng: () => number, angle?: number, key = ""): Prop {
   const d = DEFS[kind];
   return {
     kind,
@@ -330,6 +360,7 @@ function makeProp(kind: PropKind, x: number, y: number, rng: () => number, angle
     wrecked: false,
     gone: false,
     smoke: 0,
+    chunkKey: key,
   };
 }
 
@@ -386,15 +417,13 @@ function driveTraffic(p: Prop, dt: number): void {
 
   const ix = Math.round((p.x - ROAD_W / 2) / CELL);
   const iy = Math.round((p.y - ROAD_W / 2) / CELL);
-  const cx = roadCenterX(clamp(ix, 0, GRID));
-  const cy = roadCenterY(clamp(iy, 0, GRID));
+  const cx = roadCenterX(ix);
+  const cy = roadCenterY(iy);
   if (Math.hypot(p.x - cx, p.y - cy) < 14 && Math.random() < 0.03) {
     const dirs = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
     p.angle = dirs[Math.floor(Math.random() * dirs.length)]!;
   }
-  if (p.x < 30 || p.x > WORLD - 30 || p.y < 30 || p.y > WORLD - 30) {
-    p.angle += Math.PI;
-  }
+  p.chunkKey = chunkKey(chunkCoord(p.x), chunkCoord(p.y));
 }
 
 function drawProp(ctx: CanvasRenderingContext2D, p: Prop): void {

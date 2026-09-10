@@ -36,6 +36,14 @@ export function pick<T>(rng: () => number, arr: readonly T[]): T {
   return arr[Math.floor(rng() * arr.length)]!;
 }
 
+/** Deterministic 2D hash → uint32. */
+export function hash2(a: number, b: number, seed = 0): number {
+  let h = (seed ^ Math.imul(a | 0, 0x9e3779b9) ^ Math.imul(b | 0, 0x85ebca6b)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
 /** Mulberry32 — tiny seeded PRNG. */
 export function mulberry32(seed: number): () => number {
   let s = seed >>> 0;

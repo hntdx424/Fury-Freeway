@@ -1,18 +1,17 @@
 import { AudioEngine } from "./audio";
 import { Fx } from "./fx";
 import { Input } from "./input";
-import { clamp, lerp, lerpAngle, mulberry32 } from "./math";
+import { clamp, lerp, lerpAngle } from "./math";
 import { Smashables } from "./smash";
 import { PlayerCar, drawCar } from "./vehicle";
 import {
-  WORLD,
-  createWorld,
+  CELL,
+  WorldStream,
   drawBuildings,
   drawGround,
   drawLamps,
   drawSidewalks,
   resolveBuildings,
-  type World,
 } from "./world";
 
 type Mode = "title" | "play" | "pause";
@@ -23,7 +22,8 @@ export class Game {
   readonly player = new PlayerCar();
   readonly fx = new Fx();
   readonly smash = new Smashables();
-  world: World;
+  world: WorldStream;
+  seed = 4242;
   mode: Mode = "title";
   score = 0;
   combo = 0;
@@ -39,12 +39,11 @@ export class Game {
   width = 1;
   height = 1;
   dpr = 1;
-  private rng = mulberry32(4242);
   private starting = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.input = new Input(canvas);
-    this.world = createWorld(4242);
+    this.world = new WorldStream(4242);
     this.reset(false);
   }
 
@@ -55,10 +54,12 @@ export class Game {
   }
 
   reset(keepMode: boolean): void {
-    this.rng = mulberry32((Math.random() * 1e9) | 0);
-    this.world = createWorld(((Math.random() * 1e9) | 0) + 17);
-    this.smash.spawn(this.world, this.rng);
+    this.seed = ((Math.random() * 1e9) | 0) + 17;
+    this.world = new WorldStream(this.seed);
+    this.smash.clear();
     this.player.reset(this.world.spawnX, this.world.spawnY, -Math.PI / 2);
+    const boot = this.world.stream(this.player.x, this.player.y);
+    this.smash.sync(boot.loaded, boot.unloaded, this.seed, this.player.x, this.player.y);
     this.camX = this.player.x;
     this.camY = this.player.y;
     this.camRot = this.player.angle + Math.PI / 2;
@@ -77,6 +78,7 @@ export class Game {
   update(dt: number): void {
     const clicked = this.input.consumeClick();
     const escaped = this.input.consumeEscape();
+    if (this.input.consumeMute()) this.audio.toggleMute();
 
     if (this.mode === "title") {
       this.audio.setEngine(0, 0, 0);
@@ -132,6 +134,8 @@ export class Game {
       ? 0
       : clamp((this.input.mouseX - this.width / 2) / (this.width * 0.32), -1, 1);
     this.player.update(sdt, this.input, unlockedSteer);
+    const streamed = this.world.stream(this.player.x, this.player.y);
+    this.smash.sync(streamed.loaded, streamed.unloaded, this.seed, this.player.x, this.player.y);
     const wall = resolveBuildings(
       this.player.x,
       this.player.y,
@@ -146,7 +150,7 @@ export class Game {
     this.player.vy = wall.vy;
     if (wall.hit > 160) {
       this.fx.impact(wall.hit * 0.6, false);
-      this.audio.crash(wall.hit * 0.5, 0.2);
+      this.audio.crash(wall.hit * 0.5, "building");
     }
 
     if (this.player.skid > 0.25) {
@@ -227,8 +231,8 @@ export class Game {
     ctx.scale(this.camZoom, this.camZoom);
     ctx.translate(-this.camX, -this.camY);
 
-    drawGround(ctx);
-    drawSidewalks(ctx, this.world);
+    drawGround(ctx, this.camX, this.camY, this.world.chunks.values());
+    drawSidewalks(ctx, this.world.chunks.values());
     this.fx.drawWorld(ctx);
 
     const hx = Math.sin(this.camRot);
@@ -340,7 +344,13 @@ export class Game {
     ctx.textAlign = "right";
     ctx.fillStyle = "rgba(255,255,255,0.7)";
     ctx.font = '600 14px "Barlow Condensed", sans-serif';
-    ctx.fillText("MOUSE STEER  ·  WASD DRIVE  ·  SPACE DRIFT  ·  R RESTART", w - 28, h - 22);
+    ctx.fillText("MOUSE STEER  ·  WASD DRIVE  ·  SPACE DRIFT  ·  R NEW CITY  ·  M MUTE", w - 28, h - 22);
+    if (this.audio.muted) {
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#ffe27a";
+      ctx.font = '800 16px "Barlow Condensed", sans-serif';
+      ctx.fillText("MUTED", w / 2, 28);
+    }
     if (!this.input.pointerLocked) {
       ctx.textAlign = "center";
       ctx.fillStyle = "#ffe27a";
@@ -363,20 +373,26 @@ export class Game {
     ctx.strokeStyle = "#ff3b2f";
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, size, size);
-    const s = size / WORLD;
     ctx.fillStyle = "#2a2a33";
     ctx.fillRect(x, y, size, size);
+    const span = CELL * 5;
+    const s = size / span;
+    const ox = this.player.x - span / 2;
+    const oy = this.player.y - span / 2;
+    ctx.fillStyle = "#3a3a46";
+    for (const ch of this.world.chunks.values()) {
+      const bx = x + (ch.block.x - ox) * s;
+      const by = y + (ch.block.y - oy) * s;
+      ctx.fillRect(bx, by, ch.block.w * s, ch.block.h * s);
+    }
     ctx.fillStyle = "#ff3b2f";
     ctx.beginPath();
-    ctx.arc(x + this.player.x * s, y + this.player.y * s, 3.5, 0, Math.PI * 2);
+    ctx.arc(x + size / 2, y + size / 2, 3.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = "#fff";
     ctx.beginPath();
-    ctx.moveTo(x + this.player.x * s, y + this.player.y * s);
-    ctx.lineTo(
-      x + (this.player.x + this.player.headingX * 80) * s,
-      y + (this.player.y + this.player.headingY * 80) * s,
-    );
+    ctx.moveTo(x + size / 2, y + size / 2);
+    ctx.lineTo(x + size / 2 + this.player.headingX * 14, y + size / 2 + this.player.headingY * 14);
     ctx.stroke();
     ctx.restore();
   }
@@ -398,7 +414,7 @@ export class Game {
     ctx.shadowBlur = 0;
     ctx.fillStyle = "#ffb199";
     ctx.font = `600 ${Math.round(20 * s)}px "Barlow Condensed", sans-serif`;
-    ctx.fillText("Drive around. Destroy everything. There is no fail state.", w / 2, h * 0.38);
+    ctx.fillText("Drive around. Destroy everything. The city never ends.", w / 2, h * 0.38);
 
     ctx.fillStyle = "#fff";
     ctx.font = `800 ${Math.round(26 * s)}px "Barlow Condensed", sans-serif`;
@@ -412,7 +428,7 @@ export class Game {
       "GAS      W  or  ↑",
       "BRAKE    S  or  ↓     (hold to reverse)",
       "HANDBRAKE   Space     drift & snap-turn",
-      "RESTART     R",
+      "MUTE / NEW CITY     M     ·     R",
     ];
     ctx.font = `600 ${Math.round(18 * s)}px "Barlow Condensed", sans-serif`;
     ctx.textAlign = "left";
@@ -436,7 +452,7 @@ export class Game {
     ctx.fillStyle = "#ffb199";
     ctx.fillText("Click to recapture mouse and keep wrecking", w / 2, h * 0.48);
     ctx.fillStyle = "#fff";
-    ctx.fillText(`R  ·  new city     Esc  ·  release mouse     best combo x${Math.max(1, this.bestCombo)}`, w / 2, h * 0.54);
+    ctx.fillText(`R  ·  new city     M  ·  mute     Esc  ·  mouse     best combo x${Math.max(1, this.bestCombo)}`, w / 2, h * 0.54);
     ctx.restore();
   }
 }

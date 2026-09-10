@@ -14,6 +14,10 @@ export class PlayerCar {
   mass = 2.6;
   skid = 0;
   boostHeat = 0;
+  integrity = 100;
+  wrecked = false;
+  invuln = 0;
+  private regenWait = 0;
 
   get speed(): number {
     return Math.hypot(this.vx, this.vy);
@@ -39,9 +43,38 @@ export class PlayerCar {
     this.vy = 0;
     this.steer = 0;
     this.skid = 0;
+    this.integrity = 100;
+    this.wrecked = false;
+    this.invuln = 1.4;
+    this.regenWait = 0;
+  }
+
+  /** Damage from a severe immovable impact. Soft hits return 0. */
+  takeCrash(impact: number): number {
+    if (this.wrecked || this.invuln > 0) return 0;
+    if (impact < 300) return 0;
+    const dmg = (impact - 300) * 0.42;
+    this.integrity = Math.max(0, this.integrity - dmg);
+    this.regenWait = 2.6;
+    if (this.integrity <= 0) {
+      this.integrity = 0;
+      this.wrecked = true;
+    }
+    return dmg;
   }
 
   update(dt: number, input: Input, unlockedSteer = 0): void {
+    this.invuln = Math.max(0, this.invuln - dt);
+    if (this.wrecked) {
+      this.vx *= Math.exp(-2.8 * dt);
+      this.vy *= Math.exp(-2.8 * dt);
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      this.skid = 0;
+      return;
+    }
+    if (this.regenWait > 0) this.regenWait -= dt;
+    else this.integrity = Math.min(100, this.integrity + 7 * dt);
     const mouse = input.consumeMouse();
     const throttle = input.throttle();
     const handbrake = input.handbrake();

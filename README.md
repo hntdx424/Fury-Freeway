@@ -2,7 +2,9 @@
 
 A therapeutic chaos-driving game. You are not a careful driver. You are the incident.
 
-Ram the city. Flatten cones, dumpsters, signs, stalls, hydrants, parked cars, and anyone unlucky enough to share the road. Destruction is the goal — there is **no fail state** for hitting things. The city is **infinite**: chunks stream in around you as you drive.
+Ram the city. Flatten cones, dumpsters, signs, stalls, hydrants, parked cars, and anyone unlucky enough to share the road. This is an **endless destruction sandbox** — no levels, no win screen, no timer. Hitting things is the point. The city is **infinite**: chunks stream in around you as you drive.
+
+A run only ends if you **total yourself** in a severe high-speed crash (usually a brutal hit on a building). Soft bumps and wrecking the environment do not end the run.
 
 ## Run it (PC)
 
@@ -58,11 +60,12 @@ Press **M** to mute. The HUD shows **MUTED** when silent.
 ## How it plays
 
 - Smashables take damage, then wreck. Keep hitting husks to punt them.
-- **Score** scales with impact and a **combo** that stays alive if you keep wrecking (~2 seconds).
+- **Score** is a live chaos counter, not a win condition. Combos stay alive if you keep wrecking (~2 seconds).
 - **Chaos** fills as you destroy. Hit 100 and you get **FURY TIME** — extra damage, extra multiplier, red-hot car.
-- Big wrecks punch the camera, spray debris, and dip into brief slow-mo.
+- **Hull** is your car. Soft hits and environment smash do nothing to it. A catastrophic high-speed impact with a building chips or totals it.
+- When hull hits zero you get a **TOTALLED** screen with score / wrecked / best combo / peak chaos. Click or press `R` to go again.
 
-Nothing punishes you for chaos. The meter is a toy, not a health bar.
+There are no levels and no fail-for-timeout. The only way a run ends is a severe self-wreck.
 
 ## Stack
 

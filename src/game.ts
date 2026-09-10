@@ -14,7 +14,7 @@ import {
   resolveBuildings,
 } from "./world";
 
-type Mode = "title" | "play" | "pause";
+type Mode = "title" | "play" | "pause" | "wrecked";
 
 export class Game {
   readonly input: Input;
@@ -32,6 +32,8 @@ export class Game {
   fury = false;
   furyTimer = 0;
   bestCombo = 0;
+  peakChaos = 0;
+  wreckedCountFinal = 0;
   camX = 0;
   camY = 0;
   camRot = 0;
@@ -70,6 +72,8 @@ export class Game {
     this.fury = false;
     this.furyTimer = 0;
     this.bestCombo = 0;
+    this.peakChaos = 0;
+    this.wreckedCountFinal = 0;
     this.fx.shake = 0;
     this.fx.flash = 0;
     if (!keepMode) this.mode = "title";
@@ -114,6 +118,18 @@ export class Game {
       return;
     }
 
+    if (this.mode === "wrecked") {
+      this.audio.setEngine(0, 0, 0);
+      this.fx.update(dt);
+      if (clicked || this.input.down("KeyR")) {
+        this.reset(true);
+        this.input.consumeMouse();
+        this.input.requestLock();
+        this.mode = "play";
+      }
+      return;
+    }
+
     if (escaped) {
       this.mode = "pause";
       this.input.releaseLock();
@@ -149,8 +165,9 @@ export class Game {
     this.player.vx = wall.vx;
     this.player.vy = wall.vy;
     if (wall.hit > 160) {
-      this.fx.impact(wall.hit * 0.6, false);
+      this.fx.impact(wall.hit * 0.6, wall.hit > 320);
       this.audio.crash(wall.hit * 0.5, "building");
+      if (this.player.takeCrash(wall.hit) > 0 && this.player.wrecked) this.totalPlayer();
     }
 
     if (this.player.skid > 0.25) {
@@ -170,6 +187,10 @@ export class Game {
     this.player.y = wall2.y;
     this.player.vx = wall2.vx;
     this.player.vy = wall2.vy;
+    if (this.player.wrecked) {
+      this.audio.setEngine(0, 0, 0);
+      return;
+    }
     this.comboTimer -= sdt;
     if (this.comboTimer <= 0) this.combo = 0;
 
@@ -182,6 +203,7 @@ export class Game {
       const gained = e.points * mult;
       this.score += gained;
       this.chaos = clamp(this.chaos + (e.destroyed ? 9 : 3) + e.impact * 0.012, 0, 100);
+      this.peakChaos = Math.max(this.peakChaos, this.chaos);
       this.fx.impact(e.impact, e.big && e.destroyed);
       if (this.combo >= 3 && e.destroyed) {
         this.fx.comboPopup(e.x, e.y, this.combo);
@@ -218,6 +240,19 @@ export class Game {
     this.audio.setEngine(this.player.speed, this.input.throttle(), this.player.skid);
   }
 
+  private totalPlayer(): void {
+    this.wreckedCountFinal = this.smash.destroyed;
+    this.peakChaos = Math.max(this.peakChaos, this.chaos);
+    this.mode = "wrecked";
+    this.fx.impact(520, true);
+    this.fx.flash = 0.7;
+    this.fx.burst(this.player.x, this.player.y, "#ff6a3a", 480, "parked");
+    this.audio.crash(520, "building");
+    this.audio.fury();
+    this.audio.setEngine(0, 0, 0);
+    this.input.releaseLock();
+  }
+
   draw(ctx: CanvasRenderingContext2D): void {
     const w = this.width;
     const h = this.height;
@@ -247,9 +282,9 @@ export class Game {
       this.player.angle,
       this.player.length,
       this.player.width,
-      this.fury ? "#ff2a1a" : "#ff3b2f",
+      this.fury && !this.player.wrecked ? "#ff2a1a" : "#ff3b2f",
       "#111",
-      false,
+      this.player.wrecked,
     );
     drawLamps(ctx, this.world.lamps, hx, hy);
     drawBuildings(ctx, this.world.buildings, hx, hy);
@@ -263,9 +298,11 @@ export class Game {
 
     if (this.mode === "title") this.drawTitle(ctx, w, h);
     else if (this.mode === "pause") this.drawPause(ctx, w, h);
+    else if (this.mode === "wrecked") this.drawWrecked(ctx, w, h);
   }
 
   private drawHeadlights(ctx: CanvasRenderingContext2D): void {
+    if (this.player.wrecked) return;
     const hx = this.player.headingX;
     const hy = this.player.headingY;
     const x = this.player.x + hx * 18;
@@ -341,6 +378,15 @@ export class Game {
     ctx.strokeStyle = "rgba(255,255,255,0.25)";
     ctx.strokeRect(bx, 46, barW, 14);
 
+    ctx.fillStyle = "#fff";
+    ctx.fillText("HULL", w - 28, 78);
+    ctx.fillStyle = "#2a2a33";
+    ctx.fillRect(bx, 86, barW, 10);
+    ctx.fillStyle = this.player.integrity < 35 ? "#ff2a1a" : this.player.integrity < 65 ? "#ffb020" : "#3cf0c5";
+    ctx.fillRect(bx, 86, barW * (this.player.integrity / 100), 10);
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.strokeRect(bx, 86, barW, 10);
+
     ctx.textAlign = "right";
     ctx.fillStyle = "rgba(255,255,255,0.7)";
     ctx.font = '600 14px "Barlow Condensed", sans-serif';
@@ -353,7 +399,7 @@ export class Game {
       ctx.font = '800 22px "Barlow Condensed", sans-serif';
       ctx.fillText("MUTED", w / 2, 33);
     }
-    if (!this.input.pointerLocked) {
+    if (!this.input.pointerLocked && this.mode === "play") {
       ctx.textAlign = "center";
       ctx.fillStyle = "#ffe27a";
       ctx.font = '800 18px "Barlow Condensed", sans-serif';
@@ -367,7 +413,7 @@ export class Game {
   private drawMinimap(ctx: CanvasRenderingContext2D, w: number): void {
     const size = 128;
     const x = w - size - 28;
-    const y = 72;
+    const y = 108;
     ctx.save();
     ctx.globalAlpha = 0.85;
     ctx.fillStyle = "#111218";
@@ -416,7 +462,7 @@ export class Game {
     ctx.shadowBlur = 0;
     ctx.fillStyle = "#ffb199";
     ctx.font = `600 ${Math.round(20 * s)}px "Barlow Condensed", sans-serif`;
-    ctx.fillText("Drive around. Destroy everything. The city never ends.", w / 2, h * 0.38);
+    ctx.fillText("Endless sandbox. Smash the city. A brutal wall crash is the only way out.", w / 2, h * 0.38);
 
     ctx.fillStyle = "#fff";
     ctx.font = `800 ${Math.round(26 * s)}px "Barlow Condensed", sans-serif`;
@@ -455,6 +501,49 @@ export class Game {
     ctx.fillText("Click to recapture mouse and keep wrecking", w / 2, h * 0.48);
     ctx.fillStyle = "#fff";
     ctx.fillText(`R  ·  new city     M  ·  mute     Esc  ·  mouse     best combo x${Math.max(1, this.bestCombo)}`, w / 2, h * 0.54);
+    ctx.restore();
+  }
+
+  private drawWrecked(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+    ctx.fillStyle = "rgba(8,4,4,0.72)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ff3b2f";
+    ctx.font = '800 22px "Barlow Condensed", sans-serif';
+    ctx.fillText("CATASTROPHIC CRASH", w / 2, h * 0.28);
+    ctx.fillStyle = "#fff";
+    ctx.font = '800 84px "Bebas Neue", "Barlow Condensed", sans-serif';
+    ctx.shadowColor = "#ff2a1a";
+    ctx.shadowBlur = 22;
+    ctx.fillText("TOTALLED", w / 2, h * 0.4);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#ffb199";
+    ctx.font = '600 20px "Barlow Condensed", sans-serif';
+    ctx.fillText("You walked it into a wall. The city is still standing.", w / 2, h * 0.46);
+
+    ctx.fillStyle = "#fff";
+    ctx.font = '800 28px "Barlow Condensed", sans-serif';
+    ctx.fillText(this.score.toLocaleString(), w / 2, h * 0.56);
+    ctx.fillStyle = "#ffb199";
+    ctx.font = '700 16px "Barlow Condensed", sans-serif';
+    ctx.fillText("SCORE", w / 2, h * 0.59);
+
+    ctx.fillStyle = "#fff";
+    ctx.font = '700 20px "Barlow Condensed", sans-serif';
+    const wrecks = this.wreckedCountFinal || this.smash.destroyed;
+    ctx.fillText(
+      `${wrecks} wrecked     ·     best combo x${Math.max(1, this.bestCombo)}     ·     peak chaos ${Math.round(this.peakChaos)}`,
+      w / 2,
+      h * 0.66,
+    );
+
+    ctx.fillStyle = "#fff";
+    ctx.font = '800 26px "Barlow Condensed", sans-serif';
+    ctx.fillText("CLICK OR R  ·  GO AGAIN", w / 2, h * 0.76);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.font = '600 16px "Barlow Condensed", sans-serif';
+    ctx.fillText("No levels. No timer. Smash until you total yourself.", w / 2, h * 0.8);
     ctx.restore();
   }
 }

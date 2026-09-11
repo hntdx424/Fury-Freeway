@@ -105,6 +105,7 @@ export class Game {
 
     if (this.mode === "pause") {
       if (this.input.consumeRestart() || this.input.down("KeyR")) {
+        void this.audio.start();
         this.reset(true);
         this.input.resetUnlockedAim();
         this.input.requestLock();
@@ -112,6 +113,7 @@ export class Game {
         return;
       }
       if (clicked) {
+        void this.audio.start();
         this.input.resetUnlockedAim();
         this.input.requestLock();
         this.mode = "play";
@@ -123,6 +125,7 @@ export class Game {
       this.audio.setEngine(0, 0, 0);
       this.fx.update(dt);
       if (clicked || this.input.consumeRestart() || this.input.down("KeyR")) {
+        void this.audio.start();
         this.reset(true);
         this.input.resetUnlockedAim();
         this.input.requestLock();
@@ -138,6 +141,7 @@ export class Game {
       return;
     }
     if (clicked && !this.input.pointerLocked) {
+      void this.audio.start();
       this.input.resetUnlockedAim();
       this.input.requestLock();
     }
